@@ -1,0 +1,29 @@
+# Ignore node modules in all subfolders
+node_modules/
+**/node_modules/
+
+# Ignore environment variable credentials
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+
+# Ignore build artifacts
+dist/
+**/dist/
+build/
+**/build/
+
+# IDE files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS files
+.DS_Store
+Thumbs.db
