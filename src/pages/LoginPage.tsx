@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { GraduationCap, Mail, Lock, ArrowLeft, Loader2 } from "lucide-react";
+import { GraduationCap, Mail, Lock, ArrowLeft, Loader2, Eye, EyeOff } from "lucide-react";
 import toast from "react-hot-toast";
 import { loginUser } from "../services/auth.service";
 import { useAuth } from "../context/AuthContext";
@@ -9,6 +9,7 @@ import { images } from "../data/content";
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -80,8 +81,12 @@ export default function LoginPage() {
               <label className="block text-sm font-semibold text-slate-700 mb-2">Password</label>
               <div className="relative">
                 <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
-                  className="w-full pl-11 pr-4 py-3.5 border border-slate-200 placeholder-slate-500 rounded-xl focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] text-slate-800 text-sm transition-all duration-200 bg-slate-50/30" />
+                <input type={showPassword ? "text" : "password"} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
+                  className="w-full pl-11 pr-11 py-3.5 border border-slate-200 placeholder-slate-500 rounded-xl focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] text-slate-800 text-sm transition-all duration-200 bg-slate-50/30" />
+                <button type="button" onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-650 transition-colors duration-200 focus:outline-none cursor-pointer">
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
