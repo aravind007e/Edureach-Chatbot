@@ -174,7 +174,7 @@ export default function CallPopup({ open, onClose }: CallPopupProps) {
     setThinking(true);
 
     try {
-      const chatResponse = await sendMessage(`${textToSend} (Respond in a friendly, conversational spoken tone)`);
+      const chatResponse = await sendMessage(textToSend, "voice");
       setTranscript((prev) => [...prev, { sender: "bot", text: chatResponse.message }]);
       speakText(chatResponse.message);
     } catch {

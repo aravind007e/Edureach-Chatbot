@@ -4,9 +4,11 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --experimental-transform-types src/scripts/test-services.ts",
     "dev": "node --env-file=.env --watch-path=./src src/server.ts",
     "start": "node --env-file=.env --experimental-transform-types src/server.ts",
+    "ingest": "node --env-file=.env --experimental-transform-types src/scripts/ingest.ts",
+    "check:ollama": "node --env-file=.env --experimental-transform-types src/scripts/check-ollama.ts",
     "build": "tsc"
   },
   "author": "",

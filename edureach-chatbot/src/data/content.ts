@@ -102,14 +102,14 @@ export const quotesContent = [
 // ---- MENTORS ----
 export const mentorsContent = [
   {
-    name: "Dr. Rajesh Kumar",
+    name: "Prof. Ananya Sharma",
     role: "Head of CSE Department",
     image: images.teacher1,
     bio: "PhD IIT Bombay · 20+ years · 50+ research papers",
     teaches: "AI, ML, Data Science",
   },
   {
-    name: "Prof. Ananya Sharma",
+    name: "Dr. Rajesh Kumar",
     role: "Associate Professor, ECE",
     image: images.teacher2,
     bio: "M.Tech IIT Hyderabad · 15 yrs academia + 5 yrs Texas Instruments",

@@ -117,12 +117,25 @@ export default function ChatDrawer({ open, onClose }: ChatDrawerProps) {
                 <Sparkles className="w-3.5 h-3.5 text-white" />
               </div>
             )}
-            <div className={`max-w-[78%] px-4 py-3 rounded-[16px] text-sm leading-relaxed font-normal shadow-sm ${
+            <div className={`max-w-[82%] px-4 py-3 rounded-[16px] text-sm leading-relaxed font-normal shadow-sm ${
               msg.sender === "user"
                 ? "bg-[#2563EB] text-white rounded-tr-none"
                 : "bg-white text-[#0F172A] border border-slate-150 rounded-tl-none"
             }`}>
-              {msg.text}
+              <div className="whitespace-pre-line">{msg.text}</div>
+              {msg.sender === "bot" && msg.sources && msg.sources.length > 0 && (
+                <div className="mt-2.5 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10.5px] font-semibold text-slate-400">Sources:</span>
+                  {Array.from(new Set(msg.sources.map((s) => s.section || s.source))).map((sec, idx) => (
+                    <span
+                      key={idx}
+                      className="text-[10px] font-medium bg-blue-50 text-[#2563EB] px-2 py-0.5 rounded-full border border-blue-100"
+                    >
+                      {sec}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             {msg.sender === "user" && (
               <div className="w-7 h-7 bg-white rounded-lg flex items-center justify-center flex-shrink-0 text-[#475569] shadow-sm border border-slate-200">

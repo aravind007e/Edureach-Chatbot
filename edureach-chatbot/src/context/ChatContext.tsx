@@ -1,10 +1,11 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
-import { sendMessage } from "../services/chat.service";
+import { sendMessage, type SourceCitation } from "../services/chat.service";
 
 export interface Message {
   id: number;
   text: string;
   sender: "user" | "bot";
+  sources?: SourceCitation[];
 }
 
 interface ChatContextType {
@@ -44,7 +45,12 @@ export function ChatProvider({ children, userName }: { children: ReactNode; user
 
     try {
       const data = await sendMessage(trimmed);
-      const botMsg: Message = { id: Date.now() + 1, text: data.message, sender: "bot" };
+      const botMsg: Message = {
+        id: Date.now() + 1,
+        text: data.message,
+        sender: "bot",
+        sources: data.sources,
+      };
       setMessages((prev) => [...prev, botMsg]);
     } catch {
       const errorMsg: Message = { id: Date.now() + 1, text: "Sorry, something went wrong. Please try again.", sender: "bot" };
