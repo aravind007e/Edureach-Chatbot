@@ -1,9 +1,11 @@
 // =======================================================
 // EduReach — Vector Retrieval-Augmented Generation (RAG) Service
-// Optimized with timing instrumentation, query caching,
-// compact prompt construction, and Ollama generation tuning.
+// Vector RAG with lightweight intent-based routing,
+// high-resolution timing instrumentation, query caching,
+// strictly grounded prompts, and tuned Ollama inference.
 // =======================================================
 
+import os from "node:os";
 import KnowledgeDoc from "../models/knowladge-doc.model.ts";
 import { loadAndChunkKnowledgeBase } from "./document.service.ts";
 import {
@@ -32,17 +34,19 @@ export interface RAGResponseResult {
   sources: SourceCitation[];
   intent: "conversational" | "knowledge_retrieval" | "fallback";
   timingMs?: {
+    router?: number;
     embedding: number;
     retrieval: number;
+    prompt?: number;
     llm: number;
     total: number;
   };
 }
 
-const FALLBACK_MESSAGE =
+export const FALLBACK_MESSAGE =
   "I don't have enough information in the EduReach knowledge base to answer that accurately. Please contact the EduReach admissions office at admissions@edureach.edu.in or call +91 9876543210.";
 
-const OLLAMA_OFFLINE_MESSAGE =
+export const OLLAMA_OFFLINE_MESSAGE =
   "The AI counselor is currently unable to connect to the local Ollama service. Please ensure Ollama is running (`ollama serve`), or contact our admissions office at admissions@edureach.edu.in or call +91 9876543210.";
 
 // Recent Full Response Cache (10-minute TTL for identical queries)
@@ -52,10 +56,29 @@ interface CachedResponseEntry {
 }
 const responseCache = new Map<string, CachedResponseEntry>();
 const RESPONSE_CACHE_TTL_MS = 10 * 60 * 1000;
-const MAX_RESPONSE_CACHE = 100;
+const MAX_RESPONSE_CACHE = 150;
 
 export const clearResponseCache = (): void => {
   responseCache.clear();
+};
+
+/**
+ * Sanitizes errors by redacting any sensitive credentials, URLs, or secrets.
+ */
+export const sanitizeErrorMessage = (err: unknown): string => {
+  const raw = extractErrorMessage(err);
+  return raw
+    .replace(/mongodb(?:\+srv)?:\/\/[^\s]+/gi, "mongodb://[REDACTED]")
+    .replace(/(?:key|secret|token|password|auth)=?[a-z0-9_\-\.]+/gi, "[REDACTED]")
+    .replace(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi, "[REDACTED]");
+};
+
+/**
+ * Formatted safe error logger matching required diagnostic specification.
+ */
+export const logRagError = (stage: string, err: unknown): void => {
+  const safe = sanitizeErrorMessage(err);
+  console.error(`[RAG ERROR]\nstage: ${stage}\nerror: ${safe}`);
 };
 
 /**
@@ -67,36 +90,26 @@ export const buildGroundedPrompt = (
   isVoice = false
 ): string => {
   const contextText = chunks
-    .map((c, idx) => `[Context ${idx + 1} - ${c.section}]: ${c.text}`)
+    .map((c) => `[${c.section}]: ${c.text}`)
     .join("\n\n");
 
   if (isVoice) {
-    return `You are Ava, the friendly AI admissions counselor for EduReach College, Hyderabad.
-Answer the question using ONLY the facts in the CONTEXT below.
-Speak naturally in 2 short conversational sentences suitable for speech.
-Do NOT use bullet points, asterisks, or markdown.
-If the answer is not in the context, say: "I don't have that information. Please contact our admissions team at admissions@edureach.edu.in."
-
-CONTEXT:
+    return `You are Ava, admissions counselor for EduReach College.
+Answer concisely in 1-2 spoken sentences (under 30 words) using ONLY this context:
 ${contextText}
 
 Question: ${question}
 Spoken Answer:`;
   }
 
-  return `You are EduReach Bot, the official AI counselor for EduReach College, Hyderabad.
-Answer the user's question accurately using ONLY the CONTEXT CHUNKS below.
-Do NOT invent facts, numbers, or dates.
-Be concise and helpful. Use bullet points for lists.
-If the answer is not in the context, reply:
-"${FALLBACK_MESSAGE}"
+  return `You are EduReach Bot, official AI counselor for EduReach College, Hyderabad.
+Answer accurately and concisely (under 50 words) using ONLY the context below. If not present in context, reply exactly "${FALLBACK_MESSAGE}".
 
-=== CONTEXT CHUNKS ===
+CONTEXT:
 ${contextText}
-=== END CONTEXT ===
 
 Question: ${question}
-Grounded Answer:`;
+Answer:`;
 };
 
 /**
@@ -105,33 +118,38 @@ Grounded Answer:`;
 export const ingestKnowledgeBase = async (): Promise<number> => {
   console.log(" Starting knowledge base ingestion...");
 
-  const chunks = await loadAndChunkKnowledgeBase();
-  console.log(` Created ${chunks.length} structured chunks from knowledge base.`);
+  try {
+    const chunks = await loadAndChunkKnowledgeBase();
+    console.log(` Created ${chunks.length} structured chunks from knowledge base.`);
 
-  const texts = chunks.map((c) => c.text);
-  console.log(" Generating vector embeddings via Ollama...");
-  const embeddings = await generateEmbeddings(texts);
+    const texts = chunks.map((c) => c.text);
+    console.log(" Generating vector embeddings via Ollama...");
+    const embeddings = await generateEmbeddings(texts);
 
-  console.log(" Saving chunks and embeddings into MongoDB...");
-  await KnowledgeDoc.deleteMany({});
+    console.log(" Saving chunks and embeddings into MongoDB...");
+    await KnowledgeDoc.deleteMany({});
 
-  const docsToInsert = chunks.map((chunk, i) => ({
-    text: chunk.text,
-    embedding: embeddings[i] || [],
-    metadata: {
-      source: chunk.source,
-      chunkIndex: chunk.chunkIndex,
-      section: chunk.section,
-      charCount: chunk.charCount,
-    },
-  }));
+    const docsToInsert = chunks.map((chunk, i) => ({
+      text: chunk.text,
+      embedding: embeddings[i] || [],
+      metadata: {
+        source: chunk.source,
+        chunkIndex: chunk.chunkIndex,
+        section: chunk.section,
+        charCount: chunk.charCount,
+      },
+    }));
 
-  await KnowledgeDoc.insertMany(docsToInsert);
-  invalidateRetrievalCache();
-  clearResponseCache();
+    await KnowledgeDoc.insertMany(docsToInsert);
+    invalidateRetrievalCache();
+    clearResponseCache();
 
-  console.log(` Ingestion complete: ${docsToInsert.length} chunks stored in MongoDB.`);
-  return docsToInsert.length;
+    console.log(` Ingestion complete: ${docsToInsert.length} chunks stored in MongoDB.`);
+    return docsToInsert.length;
+  } catch (err) {
+    logRagError("ingestion", err);
+    throw err;
+  }
 };
 
 /**
@@ -170,22 +188,20 @@ export const initializeKnowledgeBase = async (): Promise<void> => {
       try {
         await ingestKnowledgeBase();
       } catch (ingestError: unknown) {
-        const msg = extractErrorMessage(ingestError);
-        console.warn(`⚠️ Could not complete initial vector ingestion: ${msg}`);
+        logRagError("initial_ingestion", ingestError);
         console.warn("   You can run `npm run ingest` once Ollama is ready.");
       }
     } else {
       console.log(` Knowledge base verified (${existingCount} chunks in MongoDB).`);
     }
   } catch (error: unknown) {
-    const msg = extractErrorMessage(error);
-    console.error(" Error initializing knowledge base:", msg);
+    logRagError("startup_initialization", error);
   }
 };
 
 /**
- * Optimized RAG Query Workflow with high-resolution timing metrics,
- * query embedding caching, response caching, and tuned generation parameters.
+ * Vector RAG with lightweight intent-based routing, timing instrumentation,
+ * query caching, and tuned Ollama generation parameters.
  */
 export const getRAGResponse = async (
   question: string,
@@ -193,91 +209,157 @@ export const getRAGResponse = async (
 ): Promise<RAGResponseResult> => {
   const requestStart = performance.now();
   const cleanQuestion = question.trim();
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
   if (!cleanQuestion) {
     return {
       answer: "Please provide a valid question so I can assist you.",
       sources: [],
       intent: "conversational",
-      timingMs: { embedding: 0, retrieval: 0, llm: 0, total: 0 },
+      timingMs: { router: 0, embedding: 0, retrieval: 0, prompt: 0, llm: 0, total: 0 },
     };
   }
 
   const isVoice = mode === "voice";
-  const cacheKey = `${mode}:${cleanQuestion.toLowerCase()}`;
+  // Normalize whitespace and trailing punctuation for reliable cache hits
+  const normalizedQuestion = cleanQuestion
+    .toLowerCase()
+    .replace(/[\s\t\n]+/g, " ")
+    .replace(/[?!.,;:]+$/, "")
+    .trim();
+  const cacheKey = `${mode}:${normalizedQuestion}`;
 
   // 1. Check Full Response Cache
   const cachedResponse = responseCache.get(cacheKey);
   if (cachedResponse && Date.now() - cachedResponse.timestamp < RESPONSE_CACHE_TTL_MS) {
     const total = Math.round(performance.now() - requestStart);
-    console.log(`[RAG] Cache HIT for "${cleanQuestion}" | Total: ${total}ms`);
+    console.log(
+      `[RAG TIMING]\n` +
+        `requestId: ${requestId}\n` +
+        `cache: HIT\n` +
+        `router: 0 ms\n` +
+        `embedding: 0 ms\n` +
+        `retrieval: 0 ms\n` +
+        `prompt: 0 ms\n` +
+        `llm: 0 ms\n` +
+        `total: ${total} ms`
+    );
     return {
       ...cachedResponse.result,
-      timingMs: { embedding: 0, retrieval: 0, llm: 0, total },
+      timingMs: { router: 0, embedding: 0, retrieval: 0, prompt: 0, llm: 0, total },
     };
   }
 
-  // 2. Agentic Routing
+  // 2. Intent-Based Routing
   const routeStart = performance.now();
-  const routing = routeUserQuery(cleanQuestion, isVoice);
+  let routing;
+  try {
+    routing = routeUserQuery(cleanQuestion, isVoice);
+  } catch (routeErr) {
+    logRagError("router", routeErr);
+    routing = {
+      intent: "KNOWLEDGE_RETRIEVAL" as const,
+      reasoning: "Router fallback due to exception",
+      cleanQuery: cleanQuestion,
+    };
+  }
   const routingTimeMs = Math.round(performance.now() - routeStart);
 
   if (routing.intent === "DIRECT_CONVERSATION") {
     const total = Math.round(performance.now() - requestStart);
-    console.log(`[RAG] Routing: ${routingTimeMs}ms (DIRECT_CONVERSATION) | Total: ${total}ms`);
+    console.log(
+      `[RAG TIMING]\n` +
+        `requestId: ${requestId}\n` +
+        `cache: MISS\n` +
+        `router: ${routingTimeMs} ms\n` +
+        `embedding: 0 ms\n` +
+        `retrieval: 0 ms\n` +
+        `prompt: 0 ms\n` +
+        `llm: 0 ms\n` +
+        `total: ${total} ms`
+    );
     return {
       answer: routing.directResponse || "Hello! How can I help you regarding EduReach College?",
       sources: [],
       intent: "conversational",
-      timingMs: { embedding: 0, retrieval: 0, llm: 0, total },
+      timingMs: { router: routingTimeMs, embedding: 0, retrieval: 0, prompt: 0, llm: 0, total },
     };
   }
 
   if (routing.intent === "OUT_OF_SCOPE") {
     const total = Math.round(performance.now() - requestStart);
-    console.log(`[RAG] Routing: ${routingTimeMs}ms (OUT_OF_SCOPE) | Total: ${total}ms`);
+    console.log(
+      `[RAG TIMING]\n` +
+        `requestId: ${requestId}\n` +
+        `cache: MISS\n` +
+        `router: ${routingTimeMs} ms\n` +
+        `embedding: 0 ms\n` +
+        `retrieval: 0 ms\n` +
+        `prompt: 0 ms\n` +
+        `llm: 0 ms\n` +
+        `total: ${total} ms`
+    );
     return {
       answer: routing.directResponse || FALLBACK_MESSAGE,
       sources: [],
       intent: "fallback",
-      timingMs: { embedding: 0, retrieval: 0, llm: 0, total },
+      timingMs: { router: routingTimeMs, embedding: 0, retrieval: 0, prompt: 0, llm: 0, total },
     };
   }
 
   // 3. Vector Retrieval with Timing & Embedding Cache
-  // For voice queries, retrieve top 2 chunks to minimize prompt evaluation time; for text, retrieve top 3
-  const topK = isVoice ? 2 : parseInt(process.env.RAG_TOP_K || "3", 10);
+  // Text queries retrieve top 2 cohesive chunks; voice queries use top 2 for spoken brevity
+  const topK = isVoice ? 2 : Math.max(1, Math.min(3, parseInt(process.env.RAG_TOP_K || "2", 10)));
   let retrievalResult;
 
   try {
     retrievalResult = await retrieveRelevantChunksWithMetrics(routing.cleanQuery, topK);
   } catch (retrievalError: unknown) {
-    const msg = extractErrorMessage(retrievalError);
-    console.error(" Vector retrieval error:", msg);
+    logRagError("retrieval", retrievalError);
     const total = Math.round(performance.now() - requestStart);
     return {
       answer: OLLAMA_OFFLINE_MESSAGE,
       sources: [],
       intent: "fallback",
-      timingMs: { embedding: 0, retrieval: 0, llm: 0, total },
+      timingMs: { router: routingTimeMs, embedding: 0, retrieval: 0, prompt: 0, llm: 0, total },
     };
   }
 
-  const { chunks: relevantChunks, embeddingTimeMs, retrievalTimeMs, fromEmbeddingCache } =
-    retrievalResult;
+  const { chunks: relevantChunks, embeddingTimeMs, retrievalTimeMs } = retrievalResult;
 
-  // 4. Quality Check
+  // 4. Quality Check (If no relevant chunks retrieved)
   if (relevantChunks.length === 0) {
     const total = Math.round(performance.now() - requestStart);
     console.log(
-      `[RAG] Embedding: ${embeddingTimeMs}ms ${fromEmbeddingCache ? "[cache: HIT]" : "[cache: MISS]"} | ` +
-        `Retrieval: ${retrievalTimeMs}ms (0 chunks) | Fallback triggered | Total: ${total}ms`
+      `[RAG DEBUG]\n` +
+        `query: ${cleanQuestion}\n` +
+        `route: ${routing.intent}\n` +
+        `embedding_time: ${embeddingTimeMs} ms\n` +
+        `retrieval_time: ${retrievalTimeMs} ms\n` +
+        `top_k: 0\n` +
+        `similarity_scores: []\n` +
+        `retrieved_source: none\n` +
+        `retrieved_chunk: none\n` +
+        `context_length: 0 chars\n` +
+        `llm_time: 0 ms\n` +
+        `total_time: ${total} ms`
+    );
+    console.log(
+      `[RAG TIMING]\n` +
+        `requestId: ${requestId}\n` +
+        `cache: MISS\n` +
+        `router: ${routingTimeMs} ms\n` +
+        `embedding: ${embeddingTimeMs} ms\n` +
+        `retrieval: ${retrievalTimeMs} ms (0 chunks)\n` +
+        `prompt: 0 ms\n` +
+        `llm: 0 ms\n` +
+        `total: ${total} ms`
     );
     return {
       answer: FALLBACK_MESSAGE,
       sources: [],
       intent: "fallback",
-      timingMs: { embedding: embeddingTimeMs, retrieval: retrievalTimeMs, llm: 0, total },
+      timingMs: { router: routingTimeMs, embedding: embeddingTimeMs, retrieval: retrievalTimeMs, prompt: 0, llm: 0, total },
     };
   }
 
@@ -285,15 +367,16 @@ export const getRAGResponse = async (
   const promptStart = performance.now();
   const prompt = buildGroundedPrompt(routing.cleanQuery, relevantChunks, isVoice);
   const promptTimeMs = Math.round(performance.now() - promptStart);
-
   const llmModel = getLLMModel();
-  const maxTokens = isVoice ? 85 : 200; // Concise token budgets for faster completion
+  const maxTokens = isVoice ? 35 : 65; // Compact token budget prevents long generation delays
 
-  // 6. Ollama Generation with Tuned Context & Keep-Alive
+  // 6. Ollama Generation with Tuned Context, Stop Tokens & Keep-Alive
   const llmStart = performance.now();
   let answer = "";
 
   try {
+    // Tuning CPU thread count to 4 (P-cores) to prevent E-core context switching/lock contention
+    const cpuThreads = Math.min(4, os.cpus().length || 4);
     const { response } = await fetchOllama("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -301,12 +384,14 @@ export const getRAGResponse = async (
         model: llmModel,
         prompt,
         stream: false,
-        keep_alive: "30m", // Keep model warm in RAM to avoid cold starts
+        keep_alive: "60m", // Keep model warm in RAM to avoid cold-start delays
         options: {
-          temperature: 0.2,
+          temperature: 0.1, // Low temperature for factual fidelity
           num_predict: maxTokens,
-          num_ctx: 1024, // Compact context window speeds up prompt evaluation
+          num_ctx: 1536, // 1536 tokens accommodates 3 full chunks and prompt instructions without truncation
+          num_thread: cpuThreads,
         },
+        stop: ["\n\nQuestion:", "\nQuestion:", "\nUser:", "\nStudent:", "=== END", "\n\nUser:"],
       }),
     });
 
@@ -322,29 +407,56 @@ export const getRAGResponse = async (
       answer = FALLBACK_MESSAGE;
     }
   } catch (llmError: unknown) {
-    const msg = extractErrorMessage(llmError);
-    console.error(" Ollama LLM generation error:", msg);
+    logRagError("llm", llmError);
     const total = Math.round(performance.now() - requestStart);
     return {
       answer: OLLAMA_OFFLINE_MESSAGE,
       sources: [],
       intent: "fallback",
-      timingMs: { embedding: embeddingTimeMs, retrieval: retrievalTimeMs, llm: 0, total },
+      timingMs: { router: routingTimeMs, embedding: embeddingTimeMs, retrieval: retrievalTimeMs, prompt: promptTimeMs, llm: 0, total },
     };
   }
 
   const llmTimeMs = Math.round(performance.now() - llmStart);
   const totalTimeMs = Math.round(performance.now() - requestStart);
 
-  // Print standardized development performance log
+  // Standardized diagnostic logs
+  const similarityScores = relevantChunks.map((c) => Number(c.similarity.toFixed(3))).join(", ");
+  const retrievedSources = relevantChunks.map((c) => c.section).join(", ");
+  const retrievedChunkSummary = relevantChunks
+    .map((c) => `[#${c.chunkIndex} ${c.section}: ${c.text.replace(/\s+/g, " ").substring(0, 60)}...]`)
+    .join(" | ");
+  const contextLength = relevantChunks.reduce((acc, c) => acc + c.text.length, 0);
+
   console.log(
-    `[RAG] Query: "${routing.cleanQuery}"\n` +
-      `[RAG] Routing: ${routingTimeMs}ms\n` +
-      `[RAG] Embedding: ${embeddingTimeMs}ms ${fromEmbeddingCache ? "[cache: HIT]" : "[cache: MISS]"}\n` +
-      `[RAG] Retrieval: ${retrievalTimeMs}ms (${relevantChunks.length} chunks)\n` +
-      `[RAG] Prompt: ${promptTimeMs}ms (${prompt.length} chars)\n` +
-      `[RAG] LLM: ${llmTimeMs}ms (max_tokens: ${maxTokens})\n` +
-      `[RAG] Total: ${totalTimeMs}ms`
+    `[RAG DEBUG]\n` +
+      `query: ${cleanQuestion}\n` +
+      `route: ${routing.intent}\n` +
+      `embedding_time: ${embeddingTimeMs} ms\n` +
+      `retrieval_time: ${retrievalTimeMs} ms\n` +
+      `top_k: ${relevantChunks.length}\n` +
+      `similarity_scores: [${similarityScores}]\n` +
+      `retrieved_source: ${retrievedSources}\n` +
+      `retrieved_chunk: ${retrievedChunkSummary}\n` +
+      `context_length: ${contextLength} chars\n` +
+      `llm_time: ${llmTimeMs} ms\n` +
+      `total_time: ${totalTimeMs} ms`
+  );
+
+  console.log(
+    `[RAG TIMING]\n` +
+      `requestId: ${requestId}\n` +
+      `cache: MISS\n` +
+      `router: ${routingTimeMs} ms\n` +
+      `embedding: ${embeddingTimeMs} ms\n` +
+      `retrieval: ${retrievalTimeMs} ms\n` +
+      `prompt: ${promptTimeMs} ms\n` +
+      `llm: ${llmTimeMs} ms\n` +
+      `total: ${totalTimeMs} ms\n` +
+      `LLM model: ${llmModel}\n` +
+      `embedding model: ${process.env.OLLAMA_EMBEDDING_MODEL || "nomic-embed-text"}\n` +
+      `retrieved chunk count: ${relevantChunks.length}\n` +
+      `prompt size: ${prompt.length} chars`
   );
 
   const sources: SourceCitation[] = relevantChunks.map((c) => ({
@@ -359,8 +471,10 @@ export const getRAGResponse = async (
     sources,
     intent: "knowledge_retrieval",
     timingMs: {
+      router: routingTimeMs,
       embedding: embeddingTimeMs,
       retrieval: retrievalTimeMs,
+      prompt: promptTimeMs,
       llm: llmTimeMs,
       total: totalTimeMs,
     },

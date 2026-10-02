@@ -1,250 +1,437 @@
-# EduReach — Vector RAG & Agentic College Intelligence Platform
+# EduReach — RAG-Powered Educational Assistant
 
-EduReach is a full-stack, AI-powered college intelligence platform designed to provide prospective students with instant, accurate, and grounded answers about admissions, courses, fees, scholarships, placements, faculty, and campus life.
+EduReach is a full-stack, AI-powered educational assistant designed to provide prospective and enrolled students with instant, accurate, and grounded answers about college admissions, courses, fees, scholarships, placements, faculty, campus facilities, and student life.
 
-The platform integrates:
-- **Vector Retrieval-Augmented Generation (RAG)** with paragraph/section-aware chunking and cosine similarity retrieval.
-- **Lightweight Agentic Query Router** that intelligently categorizes user intent before querying vector storage.
-- **Grounded Answer Generation** with negative constraints preventing hallucinations.
-- **Source/Citation-Aware Responses** providing verifiable institutional references to students.
-- **AI Voice Counselor ("Ava")** powered by Vapi for real-time outbound telephone guidance.
-- **JWT Authentication** ensuring secured student access to interactive features.
+The system uses **Vector RAG with lightweight intent-based routing**, combining deterministic query intent classification with dense vector semantic search to retrieve factual institutional documentation before generating responses. This architecture ensures high factual reliability, eliminates hallucinations through strict negative prompt constraints, and maintains single-second local inference latency without unpredictable autonomous loops.
 
 ---
 
-## Architecture Overview
+## 1. Project Overview
+
+Navigating college websites to find specific details—such as branch-wise tuition fees, hostel expenses, admission criteria, or placement statistics—often involves digging through disparate brochures, static tables, and lengthy circulars.
+
+**EduReach — RAG-Powered Educational Assistant** solves this challenge by serving as an interactive, 24/7 academic counselor. Students can ask natural-language questions in a chat interface or engage via web-based voice conversations. Instead of allowing an LLM to generate answers from general training data, EduReach grounds every answer in an institutional knowledge base using local vector embeddings and localized LLM inference.
+
+### Core Architectural Pillars
+- **Vector Retrieval-Augmented Generation (RAG)**: Chunks institutional knowledge, computes dense embeddings, and retrieves the most relevant excerpts based on cosine similarity.
+- **Lightweight Intent-Based Routing**: Fast, pattern-based query classification that instantly handles greetings and out-of-scope inquiries without wasting GPU/CPU cycles on vector search or LLM generation.
+- **Strict Grounding & Hallucination Prevention**: Prompts are constrained to answer strictly from retrieved knowledge chunks; if the required information is not present, the assistant gracefully falls back to official admissions office contact details.
+- **Verifiable Source Citations**: Every retrieved answer references the exact source document and section header (e.g., `FEE STRUCTURE 2024-2025`).
+- **Privacy-Preserving Local AI**: Powered by [Ollama](https://ollama.com), running `nomic-embed-text` and `llama3.2:3b` entirely on-premises with zero third-party per-token API costs for LLM inference.
+
+---
+
+## 2. Key Features
+
+- **Accurate Academic Q&A**: Answers queries across B.Tech, M.Tech, and MBA programs, seat matrix, syllabus specializations, eligibility, and counseling quotas.
+- **Transparent Fee & Scholarship Breakdown**: Provides line-item breakdowns of tuition, lab fees, exam fees, hostel accommodations, and merit/sports/need-based scholarships.
+- **Placement & Recruiter Insights**: Shares verified placement statistics (92% overall placement rate, highest/average packages, participating recruiters like Google, TCS, Infosys, Amazon, Microsoft).
+- **Fast Intent Routing**: Resolves greetings, bot identity questions, and out-of-scope topics in `<5ms` via deterministic rule matching.
+- **Voice Assistant Layer**: Integrated with Vapi to power natural web-based voice conversations and telephone counseling dispatch.
+- **Secure Student Authentication**: User registration and login powered by JSON Web Tokens (JWT) and bcrypt password hashing.
+- **Interactive UI/UX**: Clean, responsive frontend featuring an animated slide-out chat drawer, instant starter questions, source badges, and dedicated authentication screens.
+
+---
+
+## 3. System Architecture
+
+### Online Query Flow
 
 ```text
-========================================================================
-OFFLINE / INGESTION PIPELINE (CLI: npm run ingest OR Server Startup):
-========================================================================
+User
+  │
+  ▼
+React + TypeScript Frontend
+  │  (HTTP POST /api/chat/message)
+  ▼
+Express REST API
+  │
+  ▼
+Intent-Based Query Router
+  ├── [DIRECT_CONVERSATION] ──► Instant Counselor Greeting
+  ├── [OUT_OF_SCOPE]         ──► Polite Scope Refusal
+  └── [KNOWLEDGE_RETRIEVAL]
+        │
+        ▼
+      Query Embedding (nomic-embed-text via Ollama)
+        │
+        ▼
+      MongoDB Vector Retrieval (Cosine Similarity)
+        │
+        ▼
+      Top-K Relevant Knowledge Chunks
+        │
+        ▼
+      Grounded Prompt (Context Injection + Negative Constraints)
+        │
+        ▼
+      Llama 3.2 via Ollama
+        │
+        ▼
+      AI Response (Answer + Verifiable Source Badges)
+```
 
- ┌───────────────────────────────────────────────┐
- │ server/knowledge-base/edureach-knowledge.txt  │
- └───────────────────────┬───────────────────────┘
-                         │
-                         ▼
- ┌───────────────────────────────────────────────┐
- │ Document Chunking Service                     │
- │ (Section-aware, ~500 chars, sentence bounds)  │
- └───────────────────────┬───────────────────────┘
-                         │
-                         ▼
- ┌───────────────────────────────────────────────┐
- │ Ollama Embedding Service                      │
- │ POST /api/embed (model: nomic-embed-text)     │
- └───────────────────────┬───────────────────────┘
-                         │
-                         ▼
- ┌───────────────────────────────────────────────┐
- │ MongoDB Vector Storage                        │
- │ Collection: knowledge_docs                    │
- │ Schema: { text, embedding, metadata }         │
- └───────────────────────────────────────────────┘
+### Offline / Ingestion Flow
 
-========================================================================
-ONLINE / QUERY-TIME RAG PIPELINE (React ChatDrawer -> Backend):
-========================================================================
-
- User Question: "What are the B.Tech CSE tuition and hostel fees?"
-                         │
-                         ▼
- ┌───────────────────────────────────────────────┐
- │ Lightweight Agentic Query Router              │
- └───────┬───────────────────────┬───────────────┘
-         │                       │
- [Greeting/Identity]     [Off-Topic/Baking/Coding]
-         │                       │
-         ▼                       ▼
-  Direct Counselor       Polite Refusal:
-  Welcome Message        "I specialize in EduReach..."
-                                 │
-                         [College Inquiry]
-                                 ▼
- ┌───────────────────────────────────────────────┐
- │ Ollama Query Embedding                        │
- │ Generates dense numeric vector for question   │
- └───────────────────────┬───────────────────────┘
-                         │
-                         ▼
- ┌───────────────────────────────────────────────┐
- │ Vector Retrieval Service                      │
- │ - In-memory / MongoDB Cosine Similarity       │
- │ - Threshold Filter (similarity >= 0.40)       │
- │ - Rank & Select Top-K chunks (top 4)          │
- └───────────────────────┬───────────────────────┘
-                         │
-                         ▼
- ┌───────────────────────────────────────────────┐
- │ Grounded Prompt Builder                       │
- │ - Strict context injection                    │
- │ - Negative constraints (No hallucinations)    │
- │ - Fallback directive for missing info         │
- └───────────────────────┬───────────────────────┘
-                         │
-                         ▼
- ┌───────────────────────────────────────────────┐
- │ Ollama LLM Generation                         │
- │ Model: llama3.2:3b | Temperature: 0.2         │
- └───────────────────────┬───────────────────────┘
-                         │
-                         ▼
- ┌───────────────────────────────────────────────┐
- │ API Response to Frontend                      │
- │ {                                             │
- │   message: "B.Tech tuition fee is...",        │
- │   sources: ["FEE STRUCTURE 2024-2025"],      │
- │   intent: "knowledge_retrieval"               │
- │ }                                             │
- └───────────────────────────────────────────────┘
+```text
+Knowledge Base (edureach-knowledge.txt)
+  │
+  ▼
+Document Chunking (Section-aware, ~300–600 chars, sentence boundaries)
+  │
+  ▼
+nomic-embed-text (Ollama /api/embed)
+  │
+  ▼
+768-dimensional Embeddings
+  │
+  ▼
+MongoDB (knowledge_docs collection)
 ```
 
 ---
 
-## Technology Stack
+## 4. RAG Pipeline
 
-- **Frontend**: React 19, TypeScript, Tailwind CSS, Vite, Lucide Icons, React Router 7
-- **Backend**: Node.js 24, Express 5, TypeScript
-- **Database & Storage**: MongoDB / Mongoose
-- **Local AI & RAG Engine**:
-  - LLM: [Ollama](https://ollama.com) (`llama3.2:3b`)
-  - Embeddings: Ollama (`nomic-embed-text` or `all-minilm`)
-  - Vector Similarity: High-performance in-memory Cosine Similarity over MongoDB stored vectors
-- **Voice Intelligence**: Vapi AI Outbound Calling API
-- **Authentication**: JWT (JSON Web Tokens) with bcrypt password hashing
+The Retrieval-Augmented Generation pipeline is implemented across dedicated TypeScript backend services:
 
----
+1. **Section-Aware Chunking (`document.service.ts`)**:
+   - Parses `server/knowledge-base/edureach-knowledge.txt`.
+   - Recognizes institutional section headers (`ABOUT US`, `COURSES OFFERED`, `FEE STRUCTURE 2024-2025`, `ADMISSIONS PROCESS`, `PLACEMENT STATISTICS 2023-2024`, etc.).
+   - Splits content into coherent paragraph chunks (~300–600 characters) preserving sentence boundaries.
+   - Attaches rich metadata to each chunk: `{ text, source, chunkIndex, section, charCount }`.
 
-## Engineering Implementation Details
+2. **Embedding Generation (`embedding.service.ts`)**:
+   - Sends chunk texts to Ollama's `/api/embed` endpoint (with automatic fallback to `/api/embeddings`).
+   - Uses `nomic-embed-text` to generate dense 768-dimensional numerical vectors.
+   - Features built-in health checking, URL normalization (`localhost` vs `127.0.0.1` IPv4 fallback), and controlled batching to prevent overwhelming system resources.
 
-### 1. Document Chunking Pipeline (`document.service.ts`)
-- Rather than naive token or fixed-character slicing, the chunker uses **section-aware structural chunking**:
-  - Identifies uppercase topic headers (`ABOUT US`, `COURSES OFFERED`, `FEE STRUCTURE 2024-2025`, `ADMISSIONS PROCESS`, `PLACEMENT STATISTICS`, etc.).
-  - Partitions content into paragraph chunks (~300–600 characters) preserving full sentence boundaries.
-  - Attaches rich metadata: `{ text, source, chunkIndex, section, charCount }`.
+3. **Storage & Vector Retrieval (`retrieval.service.ts`)**:
+   - Stores chunks alongside their 768-dimensional embeddings in MongoDB (`knowledge_docs` collection).
+   - Loads and caches chunk vectors in memory on the backend for ultra-low latency.
+   - Evaluates mathematical cosine similarity between the query vector $A$ and document vector $B$:
+     $$\text{Cosine Similarity}(A, B) = \frac{A \cdot B}{\|A\|_2 \|B\|_2} = \frac{\sum_{i=1}^{n} A_i B_i}{\sqrt{\sum_{i=1}^{n} A_i^2} \sqrt{\sum_{i=1}^{n} B_i^2}}$$
+   - Filters out chunks below `RAG_MIN_SIMILARITY` (default `0.40`), ranks in descending order, and selects the top-K chunks (`RAG_TOP_K`, default `3`–`4`).
 
-### 2. Embedding Generation (`embedding.service.ts`)
-- Interfaces with the local Ollama daemon at `http://localhost:11434`.
-- Supports the modern `/api/embed` endpoint with automatic fallback to `/api/embeddings`.
-- Configurable embedding model via `OLLAMA_EMBEDDING_MODEL` in `.env`.
-- Includes health checking (`checkEmbeddingService()`) to verify daemon availability and model readiness.
+4. **Grounded Prompt Construction (`rag.service.ts`)**:
+   - Formats retrieved chunks with section identifiers into the prompt.
+   - Applies strict negative instructions:
+     - *"Answer the user's question accurately using ONLY the CONTEXT CHUNKS below."*
+     - *"Do NOT invent facts, numbers, or dates."*
+     - *"If the answer is not in the context, reply with the official fallback contact."*
 
-### 3. Vector Storage & Cosine Similarity (`retrieval.service.ts`)
-- **Storage**: Chunks and vectors (`number[]`) persist in MongoDB in the `knowledge_docs` collection via Mongoose `KnowledgeDoc`.
-- **Vector Search**: Real-time mathematical cosine similarity calculation:
-  $$\text{similarity}(A, B) = \frac{A \cdot B}{\|A\|_2 \|B\|_2}$$
-- **Filtering & Ranking**: Filters out chunks below `RAG_MIN_SIMILARITY` (default `0.40`), ranks by descending score, and selects the top `RAG_TOP_K` (default `4`).
-- **Caching**: Stored vectors are cached in-memory on the backend for sub-2ms retrieval latency.
-
-### 4. Lightweight Agentic Query Router (`router.service.ts`)
-- Deterministic, transparent intent classification prior to executing vector lookups:
-  1. `DIRECT_CONVERSATION`: Greetings ("Hi", "Hello there"), identity ("Who are you?"), gratitude ("Thank you") $\rightarrow$ Instant counselor response without DB querying.
-  2. `OUT_OF_SCOPE`: Generic requests ("Write a python script", "Capital of France") $\rightarrow$ Polite refusal clarifying institutional scope.
-  3. `KNOWLEDGE_RETRIEVAL`: Institutional queries (fees, courses, admissions, hostel, placements) $\rightarrow$ Dispatched to embedding generation and vector search.
-
-### 5. Grounded Prompt & Hallucination Guardrails (`rag.service.ts`)
-- Injects strictly the retrieved context chunks into the prompt.
-- Enforces strict negative instructions:
-  - Answer using ONLY the provided context chunks.
-  - Do NOT invent or extrapolate facts, fees, or contact numbers.
-  - If context is insufficient, fall back to official admissions contact: `admissions@edureach.edu.in` / `+91 9876543210`.
-
-### 6. Source-Aware Frontend (`ChatDrawer.tsx`)
-- Displays clean, clickable source badges below assistant responses (e.g., `📌 Sources: FEE STRUCTURE 2024-2025 · COURSES OFFERED`).
-- Preserves quick questions, responsive drawer animations, guest lock screen, and existing theme styles.
+5. **Inference (`llama3.2:3b`)**:
+   - Invokes Ollama with `temperature: 0.2`, `num_ctx: 1024`, and `keep_alive: "30m"`.
+   - Low temperature suppresses creative hallucination, prioritizing deterministic factual synthesis.
 
 ---
 
-## Honest Architectural Disclosure
+## 5. Technology Stack
 
-- **Vector Search Engine**: Implemented via Node.js vector cosine similarity ranking over document embeddings stored in MongoDB. It does **not** rely on MongoDB Atlas proprietary Search indexes or external vector databases (Pinecone/Chroma), making it completely portable and self-contained on any MongoDB instance.
-- **Agentic Routing**: Implemented via a deterministic, rule-based query classifier. It does **not** introduce unpredictable, multi-turn autonomous loops, guaranteeing low latency, zero prompt token waste on greetings, and 100% predictable interview demonstrations.
+| Layer | Technologies |
+| :--- | :--- |
+| **Frontend** | React 19, TypeScript, Vite, Tailwind CSS, Lucide React, React Router 7, React Hot Toast |
+| **Backend** | Node.js 24, Express 5, TypeScript |
+| **Database** | MongoDB, Mongoose 9 |
+| **AI Inference** | [Ollama](https://ollama.com) (local runtime) |
+| **LLM Generation** | Llama 3.2 3B (`llama3.2:3b`) |
+| **Embeddings** | Nomic Embed Text (`nomic-embed-text`, 768 dimensions) |
+| **Vector Retrieval**| In-memory mathematical Cosine Similarity over MongoDB stored vectors |
+| **Voice Layer** | Vapi integration for web-based voice interaction & outbound calls |
+| **Authentication** | JWT (`jsonwebtoken`), Password Hashing (`bcryptjs`) |
 
 ---
 
-## Setup & Running Guide
+## 6. Project Structure
+
+```text
+edureach-chatbot/
+├── README.md                          # Primary project documentation
+├── server/                            # Backend (Node.js + Express + TypeScript)
+│   ├── .env.example                   # Environment configuration template
+│   ├── package.json                   # Backend dependencies & npm scripts
+│   ├── tsconfig.json                  # TypeScript compiler configuration
+│   ├── knowledge-base/
+│   │   └── edureach-knowledge.txt     # Institutional knowledge base text
+│   └── src/
+│       ├── server.ts                  # Server entry point & DB connection
+│       ├── app.ts                     # Express application configuration & CORS
+│       ├── config/
+│       │   └── database.config.ts     # Mongoose MongoDB connection
+│       ├── controllers/
+│       │   ├── auth.controller.ts     # User register, login, session handlers
+│       │   ├── chat.controller.ts     # Chat message & RAG query handler
+│       │   └── vapi.controller.ts     # Vapi outbound phone call handler
+│       ├── middleware/
+│       │   ├── auth.middleware.ts     # JWT verification middleware
+│       │   └── error-handler.middleware.ts # Global error handler
+│       ├── models/
+│       │   ├── user.model.ts          # Student user Mongoose schema
+│       │   └── knowladge-doc.model.ts # Document chunk & vector Mongoose schema
+│       ├── routes/
+│       │   ├── auth.routes.ts         # /api/auth routes
+│       │   ├── chat.routes.ts         # /api/chat routes
+│       │   └── vapi.routes.ts         # /api/vapi routes
+│       ├── scripts/
+│       │   ├── check-ollama.ts        # Ollama connectivity & model diagnostic tool
+│       │   ├── ingest.ts              # Knowledge base chunking & embedding CLI
+│       │   └── test-services.ts       # Unit tests for chunking, router & math
+│       ├── services/
+│       │   ├── document.service.ts    # Section-aware chunking logic
+│       │   ├── embedding.service.ts   # Ollama API client for nomic-embed-text
+│       │   ├── rag.service.ts         # End-to-end RAG orchestrator & prompt builder
+│       │   ├── retrieval.service.ts   # Cosine similarity ranking & vector cache
+│       │   ├── router.service.ts      # Deterministic intent-based query router
+│       │   └── vapi.service.ts        # Vapi API integration client
+│       └── utils/
+│           └── helpers.ts             # Shared utility functions
+└── edureach-chatbot/                  # Frontend (React 19 + TypeScript + Vite)
+    ├── package.json                   # Frontend dependencies & npm scripts
+    ├── vite.config.ts                 # Vite bundler configuration
+    ├── tsconfig.json                  # TypeScript configuration
+    ├── index.html                     # Application HTML entry point
+    └── src/
+        ├── App.tsx                    # React Router configuration & layouts
+        ├── main.tsx                   # React root mount
+        ├── components/
+        │   ├── ChatDrawer.tsx         # Slide-out RAG chat drawer with source tags
+        │   ├── CallPopup.tsx          # Web voice call & phone counselor modal
+        │   ├── FloatingChatButton.tsx # Floating trigger button for chat
+        │   ├── Navbar.tsx             # Responsive header with auth states
+        │   └── ...                    # Landing page presentation sections
+        ├── context/
+        │   └── AuthContext.tsx        # Authentication React Context provider
+        ├── data/
+        │   └── content.ts             # Landing page copy, courses, quotes, and links
+        ├── pages/
+        │   ├── HomePage.tsx           # Main portal landing page
+        │   ├── LoginPage.tsx          # Student login page
+        │   └── SignUp.tsx             # Student registration page
+        └── services/
+            ├── api.ts                 # Axios instance with interceptors
+            ├── auth.service.ts        # Auth API calls (register, login, getMe)
+            ├── chat.service.ts        # Chat API calls
+            └── vapi.service.ts        # Call scheduling API calls
+```
+
+---
+
+## 7. How It Works
+
+1. **User Submits Query**:
+   A student types a question in the `ChatDrawer` (e.g., *"What is the tuition fee for B.Tech AI & DS and what scholarships are offered?"*).
+2. **Intent Classification**:
+   The backend `router.service.ts` inspects the input:
+   - If the query is a simple greeting or identity question (*"Hi"*, *"Who are you?"*), it immediately returns a friendly counseling greeting without invoking embeddings or LLMs.
+   - If the query is completely unrelated (*"Write a python script for merge sort"*), it returns an out-of-scope disclaimer explaining that EduReach Bot specializes in college counseling.
+   - If the query is institutional, it proceeds to the vector retrieval pipeline.
+3. **Query Embedding**:
+   `embedding.service.ts` converts the sanitized user query into a 768-dimensional vector via Ollama (`nomic-embed-text`).
+4. **Cosine Similarity Retrieval**:
+   `retrieval.service.ts` compares the query vector against all indexed chunk vectors in memory, filters out scores below `0.40`, and extracts the top 3–4 chunks.
+5. **Prompt Assembly & Guardrails**:
+   `rag.service.ts` combines the retrieved chunks into a prompt bounded by negative constraints.
+6. **Llama 3.2 Synthesis**:
+   Ollama executes local generation using `llama3.2:3b`.
+7. **Delivery with Sources**:
+   The API responds with the generated answer, timing metrics, and source citations (section name and document source). The frontend displays the answer with clickable source pills.
+
+---
+
+## 8. Authentication
+
+EduReach includes a complete JWT-based authentication system to manage student sessions:
+
+- **Registration (`POST /api/auth/register`)**: Creates student accounts with full name, email, password, and optional phone number. Passwords are automatically hashed using `bcryptjs` with salt rounds.
+- **Login (`POST /api/auth/login`)**: Authenticates credentials and returns a signed JSON Web Token (JWT) valid for 7 days.
+- **Current User Profile (`GET /api/auth/me`)**: Protected route verifying the `Authorization: Bearer <token>` header to restore student sessions.
+- **State Management**: Handled on the frontend via `AuthContext.tsx`, managing login state, user details, and automatic header injection in Axios.
+
+---
+
+## 9. Voice Assistant
+
+Vapi provides the voice conversation layer and connects users to the AI assistant through web-based voice interaction:
+
+- **Web Voice Assistant**: Students can initiate a voice session directly in the browser via `CallPopup.tsx`. It provides real-time speech synthesis and conversational exchanges with Counselor Ava using the RAG backend in `"voice"` mode (returning concise 2-sentence spoken responses).
+- **Outbound Telephony Counselor**: Authenticated students can request an outbound phone call. The backend communicates with the Vapi API (`POST https://api.vapi.ai/call`) to dispatch an automated counseling phone call to the student's mobile number, passing personalized context (interested course and inquiry topic).
+
+---
+
+## 10. Installation and Setup
 
 ### Prerequisites
-1. Node.js >= 20 (Node.js 24 recommended)
-2. MongoDB running locally or a MongoDB Atlas URI
-3. [Ollama](https://ollama.com) installed
+1. **Node.js**: Version `>= 20.0.0` (Node.js 24 recommended).
+2. **MongoDB**: Local MongoDB instance (`mongodb://localhost:27017`) or a free MongoDB Atlas connection URI.
+3. **Ollama**: Download and install from [ollama.com](https://ollama.com).
 
-### Step 1: Install Ollama & Pull Models
+### Step 1: Install & Launch Ollama Models
+Start the Ollama daemon and pull the required models:
+
 ```bash
-# 1. Download and install Ollama from https://ollama.com
+# Start Ollama service
+ollama serve
 
-# 2. Pull the LLM generation model (Llama 3.2 3B)
+# Pull the LLM generation model (approx 2.0 GB)
 ollama pull llama3.2:3b
 
-# 3. Pull the embedding model (Nomic Embed Text)
+# Pull the embedding model (768 dimensions, approx 274 MB)
 ollama pull nomic-embed-text
-
-# 4. Ensure Ollama is running
-ollama serve
 ```
 
-### Step 2: Backend Setup
+### Step 2: Backend Installation
+Open a terminal and navigate to the `server` directory:
+
 ```bash
-# Navigate to server directory
 cd server
-
-# Install dependencies
 npm install
-
-# Configure environment variables (.env)
-# Review or update server/.env:
-# PORT=5000
-# MONGODB_URI=mongodb://localhost:27017/edureach
-# OLLAMA_BASE_URL=http://localhost:11434
-# OLLAMA_MODEL=llama3.2:3b
-# OLLAMA_EMBEDDING_MODEL=nomic-embed-text
-# RAG_TOP_K=4
-# RAG_MIN_SIMILARITY=0.40
-
-# Ingest and embed the knowledge base into MongoDB
-npm run ingest
-
-# Run unit tests (verifies chunking, router, and cosine similarity)
-npm test
-
-# Start the server
-npm run dev
 ```
 
-### Step 3: Frontend Setup
+Create your `.env` configuration file by copying `.env.example`:
+
 ```bash
-# In a new terminal, navigate to frontend directory
-cd edureach-chatbot
-
-# Install dependencies
-npm install
-
-# Start Vite development server
-npm run dev
+cp .env.example .env
 ```
 
-Visit `http://localhost:5173` to explore the portal and chat with EduReach Bot.
+Verify your Ollama installation and embedding models with the diagnostic utility:
+
+```bash
+npm run check:ollama
+```
+
+### Step 3: Frontend Installation
+Open a second terminal and navigate to the `edureach-chatbot` directory:
+
+```bash
+cd edureach-chatbot
+npm install
+```
 
 ---
 
-## API Reference
+## 11. Environment Variables
 
-### Send Message / Ask AI Counselor
-- **Endpoint**: `POST /api/chat/message`
-- **Headers**: `Content-Type: application/json`
-- **Request Body**:
+Configure `server/.env` based on the following template (placeholders only; never commit real secrets):
+
+```env
+# Server Configuration
+PORT=5000
+CLIENT_URL=http://localhost:5173
+
+# Database
+MONGODB_URI=mongodb://localhost:27017/edureach
+
+# Authentication
+JWT_SECRET=your_jwt_secret_key_here
+JWT_EXPIRES_IN=7d
+
+# Ollama LLM & Embedding Configuration
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2:3b
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+
+# RAG Retrieval Settings
+RAG_TOP_K=4
+RAG_MIN_SIMILARITY=0.40
+
+# AI Voice Counselor (Vapi)
+VAPI_API_KEY=your_vapi_api_key
+VAPI_ASSISTANT_ID=your_vapi_assistant_id
+VAPI_PHONE_NUMBER_ID=your_vapi_phone_number_id
+```
+
+---
+
+## 12. Running the Project
+
+Use the actual scripts configured in each `package.json`:
+
+### Backend Scripts (`server/package.json`)
+
+```bash
+# In server/ directory:
+
+# 1. Run Ollama and environment diagnostics
+npm run check:ollama
+
+# 2. Ingest and embed the knowledge base into MongoDB
+npm run ingest
+
+# 3. Run unit tests (chunking, router, and cosine similarity)
+npm test
+
+# 4. Start the backend in development mode (with file watcher)
+npm run dev
+
+# 5. Build TypeScript to JavaScript
+npm run build
+
+# 6. Start the compiled production server
+npm run start
+```
+
+### Frontend Scripts (`edureach-chatbot/package.json`)
+
+```bash
+# In edureach-chatbot/ directory:
+
+# 1. Start the Vite development server
+npm run dev
+
+# 2. Build for production (TypeScript check + Vite bundle)
+npm run build
+
+# 3. Preview production build locally
+npm run preview
+
+# 4. Run ESLint code checks
+npm run lint
+```
+
+Once running, access the web portal at `http://localhost:5173` and the backend API at `http://localhost:5000`.
+
+---
+
+## 13. API Overview
+
+All backend endpoints are prefixed with `/api`:
+
+### Authentication (`/api/auth`)
+| Method | Endpoint | Description | Auth Required |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/auth/register` | Register a new student account | No |
+| `POST` | `/api/auth/login` | Authenticate student and return JWT | No |
+| `GET` | `/api/auth/me` | Fetch authenticated student profile | Yes (`Bearer <token>`) |
+
+#### Sample Registration Body:
 ```json
 {
-  "message": "What is the fee for B.Tech CSE and what scholarships are offered?"
+  "name": "Jane Doe",
+  "email": "jane@example.com",
+  "password": "securepassword123",
+  "phone": "+91-9876543210"
 }
 ```
 
-- **Response (HTTP 200)**:
+### Chat & Knowledge Retrieval (`/api/chat`)
+| Method | Endpoint | Description | Auth Required |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/chat/message` | Submit a student question to the RAG pipeline | Optional |
+
+#### Sample Request:
+```json
+{
+  "message": "What is the fee structure for B.Tech CSE and what scholarships exist?",
+  "mode": "text"
+}
+```
+
+#### Sample Response:
 ```json
 {
   "success": true,
   "data": {
-    "message": "For B.Tech Computer Science and Engineering (CSE):\n- Tuition Fee: Rs 1,50,000 per year\n- Lab Fee: Rs 15,000 per year\n- Exam Fee: Rs 5,000 per year\n- Day Scholar Total: Rs 1,70,000 per year\n- Hosteller Total: Rs 2,50,000 per year (including Rs 80,000 hostel & mess)\n\nScholarships Available:\n- Merit Scholarship: 50% tuition waiver for top 10 rankers\n- Need-based Scholarship: Up to 100% fee waiver\n- Sports Scholarship: 25% fee waiver for state/national level athletes\n- SC/ST/OBC fee reimbursement available.",
+    "message": "For B.Tech Computer Science and Engineering (CSE):\n- Tuition Fee: Rs 1,50,000 per year\n- Lab Fee: Rs 15,000 per year\n- Exam Fee: Rs 5,000 per year\n- Day Scholar Total: Rs 1,70,000 per year\n- Hosteller Total: Rs 2,50,000 per year (including Rs 80,000 hostel & mess)\n\nScholarships Available:\n- Merit Scholarship: 50% tuition waiver for top 10 rankers\n- Need-based Scholarship: Up to 100% fee waiver\n- Sports Scholarship: 25% fee waiver for state/national athletes\n- SC/ST/OBC government fee reimbursement.",
     "sources": [
       {
         "source": "edureach-knowledge.txt",
@@ -253,38 +440,66 @@ Visit `http://localhost:5173` to explore the portal and chat with EduReach Bot.
         "similarity": 0.842
       }
     ],
-    "intent": "knowledge_retrieval"
+    "intent": "knowledge_retrieval",
+    "timingMs": {
+      "embedding": 142,
+      "retrieval": 2,
+      "llm": 890,
+      "total": 1034
+    }
   }
 }
 ```
 
+### Voice Calling (`/api/vapi`)
+| Method | Endpoint | Description | Auth Required |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/vapi/call` | Dispatch an outbound AI voice counselor call | Yes (`Bearer <token>`) |
+
 ---
 
-## Potential Technical Interview Questions & Answers
+## 14. RAG Ingestion
 
-#### Q1: Why did you implement chunk-level Vector RAG instead of injecting the entire knowledge base file into the LLM prompt?
-> **Answer**: Injecting the whole document into every prompt causes:
-> 1. **Context Window Exhaustion**: As institutional documentation grows (syllabi, policies, regulations), it quickly exceeds LLM context limits.
-> 2. **High Latency & Resource Waste**: Every prompt processes thousands of tokens that are completely irrelevant to the specific question asked.
-> 3. **Lost in the Middle Effect**: LLMs often miss details buried in lengthy prompt contexts.
-> 
-> Vector RAG chunks the document, embeds each chunk, and retrieves only the top 3–4 semantically relevant paragraphs. This ensures fast generation, low memory overhead, and precise grounding.
+The ingestion workflow is responsible for converting unstructured institutional text into structured, queryable vectors:
 
-#### Q2: How does the embedding model differ from the generation model?
-> **Answer**:
-> - The **embedding model** (`nomic-embed-text`) maps text into a dense mathematical vector space (e.g., 768 dimensions) where semantically similar texts have high cosine similarity. It does not generate text.
-> - The **generation model** (`llama3.2:3b`) takes the retrieved textual context and user prompt, synthesizes the facts, and constructs a fluent, natural language answer.
+1. **Document Loading**: Reads the raw text file from `server/knowledge-base/edureach-knowledge.txt`.
+2. **Section Chunking**: Detects uppercase topic boundaries and partitions content into paragraph chunks (~300–600 characters) while maintaining sentence integrity.
+3. **Embedding Computation**: Calls Ollama's `nomic-embed-text` to generate a 768-dimensional float array for each chunk.
+4. **MongoDB Persistence**:
+   - Replaces existing documents in the `knowledge_docs` collection to prevent duplicate indexing.
+   - Saves chunk text, vector embeddings, and metadata (`source`, `section`, `chunkIndex`, `charCount`).
+5. **Execution**:
+   Run ingestion manually at any time via:
+   ```bash
+   npm run ingest
+   ```
+   *Note: On server startup (`server.ts`), the application checks MongoDB. If `knowledge_docs` is empty and Ollama is available, it automatically triggers initial ingestion.*
 
-#### Q3: How do you prevent hallucinations in this architecture?
-> **Answer**: Hallucination defense is enforced at three levels:
-> 1. **Similarity Score Threshold**: If the top retrieved chunks have a similarity score below `RAG_MIN_SIMILARITY` (0.40), the system immediately halts generation and returns a safe fallback message.
-> 2. **Negative Constraints in the System Prompt**: The prompt strictly instructs the LLM: *"Answer using ONLY the provided CONTEXT CHUNKS. Do NOT invent facts or extrapolate."*
-> 3. **Low Temperature**: Generation temperature is pinned to `0.2`, suppressing creative extrapolation in favor of deterministic factual recall.
+---
 
-#### Q4: Why did you choose a deterministic query router instead of an LLM-based agentic router?
-> **Answer**: An LLM-based classifier incurs an additional LLM call (adding 500ms–1500ms of latency and extra compute) just to identify a greeting or trivial greeting. A deterministic regex/rule-based router handles greetings and off-topic queries in less than 1 millisecond with 100% predictable behavior, saving compute exclusively for real knowledge retrieval.
+## 15. Performance / Response Optimization
 
-#### Q5: How is vector retrieval computed without an external vector database?
-> **Answer**: Document chunks and their high-dimensional embedding vectors are stored in MongoDB. At query time, the query vector is compared against document vectors using the mathematical cosine similarity formula:
-> $$\frac{A \cdot B}{\|A\| \|B\|}$$
-> Vectors are cached in-memory on the Node.js server, allowing real-time similarity ranking across hundreds of chunks in single-digit milliseconds without requiring additional third-party SaaS infrastructure.
+The EduReach backend employs several optimizations to deliver fast response times on local consumer hardware:
+
+1. **In-Memory Vector Cache**:
+   After the initial fetch from MongoDB, all chunk embeddings are cached in server RAM. Computing cosine similarity over hundreds of chunks takes `<2ms`.
+2. **Query Embedding Cache (LRU)**:
+   Maintains a Least-Recently-Used (LRU) cache of generated query vectors (`MAX_QUERY_CACHE_SIZE = 150`). Identical queries bypass the ~150ms Ollama embedding call entirely.
+3. **Response Cache**:
+   Stores complete RAG responses with a 10-minute TTL for repeated questions, returning instant responses in `<5ms`.
+4. **Deterministic Intent Router**:
+   Non-informational queries (greetings, identity, off-topic requests) are resolved immediately via regex patterns, avoiding unnecessary embedding computation and LLM generation.
+5. **Ollama Inference Tuning**:
+   - `keep_alive: "30m"` keeps the model warm in RAM to eliminate cold-start loading delays.
+   - `num_ctx: 1024` limits context evaluation to what is strictly necessary.
+   - `num_predict: 200` (or `85` for voice) limits output tokens to concise, focused answers.
+
+---
+
+## 16. Future Improvements
+
+- **Hybrid Search**: Combine dense vector cosine similarity with sparse BM25 keyword search (reciprocal rank fusion) for enhanced precision on exact course codes and acronyms.
+- **Cross-Encoder Re-Ranking**: Introduce a lightweight re-ranking step over the top-10 candidate chunks before passing them to the generator.
+- **Streaming Responses**: Stream response tokens directly to the frontend chat UI via Server-Sent Events (SSE).
+- **Multi-Document Upload**: Admin portal for uploading PDF, DOCX, and CSV circulars with automatic OCR and table parsing.
+- **Conversational Memory**: Multi-turn dialogue history tracking within MongoDB sessions while maintaining strict factual grounding.

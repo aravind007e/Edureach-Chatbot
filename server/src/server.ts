@@ -2,7 +2,7 @@ import app from "./app.ts";
 import connectDB from "./config/database.config.ts";
 import { initializeKnowledgeBase } from "./services/rag.service.ts";
 
-const PORT = process.env.PORT || 5000;
+const PORT = parseInt(process.env.PORT || "5000", 10);
 
 const start = async (): Promise<void> => {
   try {
@@ -14,8 +14,8 @@ const start = async (): Promise<void> => {
     //    Subsequent runs: sees data exists, skips
     await initializeKnowledgeBase();
 
-    // 3. Start Express
-    app.listen(PORT, () => {
+    // 3. Start Express listening on 0.0.0.0 for seamless IPv4/IPv6 support
+    app.listen(PORT, "0.0.0.0", () => {
       console.log(` EduReach Server is running!`);
       console.log(` URL: http://localhost:${PORT}`);
       console.log(` Node: ${process.version}`);

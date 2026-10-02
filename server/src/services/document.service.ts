@@ -35,7 +35,7 @@ export const chunkKnowledgeText = (
   const lines = rawText.split(/\r?\n/);
   const sections: { sectionName: string; lines: string[] }[] = [];
 
-  let currentSection = "General Information";
+  let currentSection = "";
   let currentLines: string[] = [];
 
   // Known section headers or ALL-CAPS lines
@@ -51,8 +51,16 @@ export const chunkKnowledgeText = (
   for (const line of lines) {
     const trimmed = line.trim();
     if (isSectionHeader(trimmed)) {
-      if (currentLines.length > 0) {
+      if (currentLines.length > 0 && currentSection) {
         sections.push({ sectionName: currentSection, lines: [...currentLines] });
+        currentLines = [];
+      } else if (currentLines.length > 0 && !currentSection) {
+        // Preamble or title before the first section header
+        // If it's substantive text (>120 chars), preserve it; otherwise skip bare title headers
+        const preambleText = currentLines.join(" ").trim();
+        if (preambleText.length > 120) {
+          sections.push({ sectionName: "General Information", lines: [...currentLines] });
+        }
         currentLines = [];
       }
       currentSection = trimmed;
@@ -61,12 +69,13 @@ export const chunkKnowledgeText = (
     }
   }
 
-  if (currentLines.length > 0) {
+  if (currentLines.length > 0 && currentSection) {
     sections.push({ sectionName: currentSection, lines: [...currentLines] });
   }
 
   const chunks: DocumentChunk[] = [];
   let chunkCounter = 0;
+  const MAX_CHUNK_CHARS = 1000;
 
   for (const sec of sections) {
     const sectionBody = sec.lines.join("\n");
@@ -75,8 +84,8 @@ export const chunkKnowledgeText = (
     let currentBuffer = "";
 
     for (const paragraph of paragraphs) {
-      // If adding this paragraph keeps chunk under ~600 chars, append it
-      if (currentBuffer.length + paragraph.length + 1 <= 600) {
+      // If adding this paragraph keeps chunk under MAX_CHUNK_CHARS, append it
+      if (currentBuffer.length + paragraph.length + 1 <= MAX_CHUNK_CHARS) {
         currentBuffer = currentBuffer ? `${currentBuffer}\n${paragraph}` : paragraph;
       } else {
         // Flush existing buffer if non-empty
@@ -91,13 +100,13 @@ export const chunkKnowledgeText = (
           });
         }
 
-        // If the single paragraph itself is very long (>600 chars), split by sentences
-        if (paragraph.length > 600) {
+        // If the single paragraph itself is very long (>MAX_CHUNK_CHARS), split by sentences
+        if (paragraph.length > MAX_CHUNK_CHARS) {
           const sentences = paragraph.match(/[^.!?]+[.!?]+(\s|$)/g) || [paragraph];
           let sentBuffer = "";
 
           for (const sentence of sentences) {
-            if (sentBuffer.length + sentence.length <= 500) {
+            if (sentBuffer.length + sentence.length <= 800) {
               sentBuffer += sentence;
             } else {
               if (sentBuffer.trim()) {

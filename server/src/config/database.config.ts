@@ -22,7 +22,6 @@ const connectDB = async (): Promise<void> => {
       }
     }
 
-    console.log("URI:", process.env.MONGODB_URI);
     const conn = await mongoose.connect(mongoURI);
 
     console.log(`MongoDB Connected: ${conn.connection.host}`);
