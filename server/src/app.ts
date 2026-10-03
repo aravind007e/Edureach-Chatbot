@@ -16,8 +16,13 @@ const allowedOrigins = [
   "http://127.0.0.1:3000",
 ];
 
-if (process.env.CLIENT_URL && !allowedOrigins.includes(process.env.CLIENT_URL)) {
-  allowedOrigins.push(process.env.CLIENT_URL);
+if (process.env.CLIENT_URL) {
+  const customOrigins = process.env.CLIENT_URL.split(",").map((o) => o.trim()).filter(Boolean);
+  for (const origin of customOrigins) {
+    if (!allowedOrigins.includes(origin)) {
+      allowedOrigins.push(origin);
+    }
+  }
 }
 
 app.use(
@@ -39,9 +44,14 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-app.get("/api/health", (_req: Request, res: Response) => {
+const healthCheck = (_req: Request, res: Response) => {
   res.status(200).json({ status: "healthy", service: "EduReach Server", timestamp: new Date().toISOString() });
-});
+};
+
+app.get("/api/health", healthCheck);
+app.get("/health", healthCheck);
+app.get("/", healthCheck);
+
 
 app.use("/api/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
