@@ -60,6 +60,13 @@ export const fetchOllama = async (
 ): Promise<{ response: Response; usedUrl: string }> => {
   const primaryBase = normalizeBaseUrl();
   const normalizedPath = endpointPath.startsWith("/") ? endpointPath : `/${endpointPath}`;
+  const headers = new Headers(init?.headers);
+  const authToken = process.env.OLLAMA_AUTH_TOKEN?.trim();
+
+  if (authToken) {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  }
+  const requestInit: RequestInit = { ...init, headers };
 
   // Candidate URLs to try
   const candidateBases = [primaryBase];
@@ -74,7 +81,7 @@ export const fetchOllama = async (
   for (const base of candidateBases) {
     const fullUrl = `${base}${normalizedPath}`;
     try {
-      const response = await fetch(fullUrl, init);
+      const response = await fetch(fullUrl, requestInit);
       return { response, usedUrl: fullUrl };
     } catch (err) {
       lastError = err;

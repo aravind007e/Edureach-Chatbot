@@ -9,6 +9,7 @@
     "start": "node --env-file-if-exists=.env --experimental-transform-types src/server.ts",
     "ingest": "node --env-file-if-exists=.env --experimental-transform-types src/scripts/ingest.ts",
     "check:ollama": "node --env-file-if-exists=.env --experimental-transform-types src/scripts/check-ollama.ts",
+    "proxy:ollama": "node --env-file-if-exists=.env --experimental-transform-types scripts/ollama-auth-proxy.ts",
     "build": "tsc"
   },
   "author": "",
