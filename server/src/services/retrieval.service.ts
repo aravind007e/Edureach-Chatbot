@@ -100,13 +100,20 @@ export const getStoredChunks = async () => {
   return cachedChunks;
 };
 
+export const normalizeQueryKey = (q: string): string =>
+  q
+    .toLowerCase()
+    .replace(/[\s\t\n]+/g, " ")
+    .replace(/[?!.,;:]+$/, "")
+    .trim();
+
 /**
  * Retrieves query embedding using the LRU cache to avoid unnecessary Ollama embedding requests.
  */
 const getOrGenerateQueryVector = async (
   query: string
 ): Promise<{ vector: number[]; fromCache: boolean; timeMs: number }> => {
-  const normalizedKey = query.trim().toLowerCase();
+  const normalizedKey = normalizeQueryKey(query);
   const cached = queryEmbeddingCache.get(normalizedKey);
 
   if (cached && cached.length > 0) {
@@ -127,6 +134,41 @@ const getOrGenerateQueryVector = async (
 
   return { vector, fromCache: false, timeMs };
 };
+
+const COMMON_QUERIES = [
+  "What is the admission process?",
+  "What courses do you offer?",
+  "What are the B.Tech eligibility requirements?",
+  "What are the placement opportunities?",
+  "What is the fee structure?",
+  "What scholarships are available?",
+  "What facilities are available?",
+];
+
+/**
+ * Pre-warms the document chunks and common query embeddings in memory
+ * to eliminate cold-start database and Ollama embedding latency.
+ */
+export const warmKnowledgeCache = async (): Promise<void> => {
+  await getStoredChunks();
+};
+
+export const prewarmQueryEmbeddings = async (): Promise<void> => {
+  for (const q of COMMON_QUERIES) {
+    const key = normalizeQueryKey(q);
+    if (!queryEmbeddingCache.has(key)) {
+      try {
+        const vec = await generateEmbedding(q);
+        if (vec && vec.length > 0) {
+          queryEmbeddingCache.set(key, vec);
+        }
+      } catch {
+        break; // Stop background warming if Ollama is unreachable
+      }
+    }
+  }
+};
+
 
 /**
  * Retrieves top-K chunks and returns detailed timing metrics.

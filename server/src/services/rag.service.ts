@@ -18,6 +18,8 @@ import {
 import {
   retrieveRelevantChunksWithMetrics,
   invalidateRetrievalCache,
+  warmKnowledgeCache,
+  prewarmQueryEmbeddings,
   type RetrievedChunk,
 } from "./retrieval.service.ts";
 import { routeUserQuery } from "./router.service.ts";
@@ -39,6 +41,7 @@ export interface RAGResponseResult {
     retrieval: number;
     prompt?: number;
     llm: number;
+    generation?: number;
     total: number;
   };
 }
@@ -90,12 +93,12 @@ export const buildGroundedPrompt = (
   isVoice = false
 ): string => {
   const contextText = chunks
-    .map((c) => `[${c.section}]: ${c.text}`)
+    .map((c) => c.text)
     .join("\n\n");
 
   if (isVoice) {
     return `You are Ava, admissions counselor for EduReach College.
-Answer concisely in 1-2 spoken sentences (under 30 words) using ONLY this context:
+Answer concisely in 1-2 spoken sentences using ONLY this context:
 ${contextText}
 
 Question: ${question}
@@ -103,7 +106,7 @@ Spoken Answer:`;
   }
 
   return `You are EduReach Bot, official AI counselor for EduReach College, Hyderabad.
-Answer accurately and concisely (under 50 words) using ONLY the context below. If not present in context, reply exactly "${FALLBACK_MESSAGE}".
+Answer directly in 1-2 clear, complete sentences using ONLY the context below. Conclude your answer cleanly. If not present in context, reply exactly "${FALLBACK_MESSAGE}".
 
 CONTEXT:
 ${contextText}
@@ -193,6 +196,21 @@ export const initializeKnowledgeBase = async (): Promise<void> => {
       }
     } else {
       console.log(` Knowledge base verified (${existingCount} chunks in MongoDB).`);
+      // Pre-warm document chunks and common query embeddings
+      void warmKnowledgeCache().catch(() => {});
+      void prewarmQueryEmbeddings().catch(() => {});
+      // Pre-warm LLM model in RAM so the first user query doesn't pay a cold-start load penalty
+      if (health.available && health.llmModelFound) {
+        void fetchOllama("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: health.llmModel,
+            prompt: "",
+            keep_alive: "60m",
+          }),
+        }).catch(() => {});
+      }
     }
   } catch (error: unknown) {
     logRagError("startup_initialization", error);
@@ -282,7 +300,7 @@ export const getRAGResponse = async (
       answer: routing.directResponse || "Hello! How can I help you regarding EduReach College?",
       sources: [],
       intent: "conversational",
-      timingMs: { router: routingTimeMs, embedding: 0, retrieval: 0, prompt: 0, llm: 0, total },
+      timingMs: { router: routingTimeMs, embedding: 0, retrieval: 0, prompt: 0, llm: 0, generation: 0, total },
     };
   }
 
@@ -303,7 +321,7 @@ export const getRAGResponse = async (
       answer: routing.directResponse || FALLBACK_MESSAGE,
       sources: [],
       intent: "fallback",
-      timingMs: { router: routingTimeMs, embedding: 0, retrieval: 0, prompt: 0, llm: 0, total },
+      timingMs: { router: routingTimeMs, embedding: 0, retrieval: 0, prompt: 0, llm: 0, generation: 0, total },
     };
   }
 
@@ -321,7 +339,7 @@ export const getRAGResponse = async (
       answer: OLLAMA_OFFLINE_MESSAGE,
       sources: [],
       intent: "fallback",
-      timingMs: { router: routingTimeMs, embedding: 0, retrieval: 0, prompt: 0, llm: 0, total },
+      timingMs: { router: routingTimeMs, embedding: 0, retrieval: 0, prompt: 0, llm: 0, generation: 0, total },
     };
   }
 
@@ -359,7 +377,7 @@ export const getRAGResponse = async (
       answer: FALLBACK_MESSAGE,
       sources: [],
       intent: "fallback",
-      timingMs: { router: routingTimeMs, embedding: embeddingTimeMs, retrieval: retrievalTimeMs, prompt: 0, llm: 0, total },
+      timingMs: { router: routingTimeMs, embedding: embeddingTimeMs, retrieval: retrievalTimeMs, prompt: 0, llm: 0, generation: 0, total },
     };
   }
 
@@ -368,15 +386,15 @@ export const getRAGResponse = async (
   const prompt = buildGroundedPrompt(routing.cleanQuery, relevantChunks, isVoice);
   const promptTimeMs = Math.round(performance.now() - promptStart);
   const llmModel = getLLMModel();
-  const maxTokens = isVoice ? 35 : 65; // Compact token budget prevents long generation delays
+  const maxTokens = isVoice ? 35 : 65; // Balanced token budget for complete sentences without delay
 
   // 6. Ollama Generation with Tuned Context, Stop Tokens & Keep-Alive
   const llmStart = performance.now();
   let answer = "";
 
   try {
-    // Tuning CPU thread count to 4 (P-cores) to prevent E-core context switching/lock contention
-    const cpuThreads = Math.min(4, os.cpus().length || 4);
+    // Tuning CPU thread count to 8 for optimal prompt evaluation and throughput
+    const cpuThreads = Math.min(8, os.cpus().length || 4);
     const { response } = await fetchOllama("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -388,10 +406,10 @@ export const getRAGResponse = async (
         options: {
           temperature: 0.1, // Low temperature for factual fidelity
           num_predict: maxTokens,
-          num_ctx: 1536, // 1536 tokens accommodates 3 full chunks and prompt instructions without truncation
+          num_ctx: 768, // 768 tokens reduces KV cache memory footprint & speeds up CPU attention
           num_thread: cpuThreads,
         },
-        stop: ["\n\nQuestion:", "\nQuestion:", "\nUser:", "\nStudent:", "=== END", "\n\nUser:"],
+        stop: ["\n\nQuestion:", "\nQuestion:", "\nUser:", "\nStudent:", "=== END", "\n\nUser:", "Question:"],
       }),
     });
 
@@ -413,7 +431,7 @@ export const getRAGResponse = async (
       answer: OLLAMA_OFFLINE_MESSAGE,
       sources: [],
       intent: "fallback",
-      timingMs: { router: routingTimeMs, embedding: embeddingTimeMs, retrieval: retrievalTimeMs, prompt: promptTimeMs, llm: 0, total },
+      timingMs: { router: routingTimeMs, embedding: embeddingTimeMs, retrieval: retrievalTimeMs, prompt: promptTimeMs, llm: 0, generation: 0, total },
     };
   }
 
@@ -476,6 +494,7 @@ export const getRAGResponse = async (
       retrieval: retrievalTimeMs,
       prompt: promptTimeMs,
       llm: llmTimeMs,
+      generation: llmTimeMs,
       total: totalTimeMs,
     },
   };

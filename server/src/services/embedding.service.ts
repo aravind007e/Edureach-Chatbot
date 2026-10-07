@@ -178,7 +178,7 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
     const { response } = await fetchOllama("/api/embed", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, input: cleanText }),
+      body: JSON.stringify({ model, input: cleanText, keep_alive: "60m" }),
     });
 
     if (response.ok) {
@@ -217,7 +217,7 @@ export const generateEmbedding = async (text: string): Promise<number[]> => {
     const { response } = await fetchOllama("/api/embeddings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt: cleanText }),
+      body: JSON.stringify({ model, prompt: cleanText, keep_alive: "60m" }),
     });
 
     if (!response.ok) {
