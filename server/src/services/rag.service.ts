@@ -85,6 +85,38 @@ export const logRagError = (stage: string, err: unknown): void => {
 };
 
 /**
+ * Ensures spoken and text responses do not end with dangling, incomplete fragments.
+ * If generation was cut off mid-sentence after at least one complete sentence,
+ * trims back to the last complete sentence.
+ */
+export const ensureCompleteResponse = (text: string): string => {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed === FALLBACK_MESSAGE || trimmed === OLLAMA_OFFLINE_MESSAGE) {
+    return trimmed;
+  }
+
+  // If text cleanly ends with sentence-ending punctuation, return as-is
+  if (/[.!?]["']?$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Look for the last terminal punctuation mark (. ! ?)
+  const lastPunctuation = Math.max(
+    trimmed.lastIndexOf("."),
+    trimmed.lastIndexOf("!"),
+    trimmed.lastIndexOf("?")
+  );
+
+  // If there is an earlier complete sentence of substantive length, keep up to that sentence
+  if (lastPunctuation > 25) {
+    return trimmed.substring(0, lastPunctuation + 1).trim();
+  }
+
+  // If no terminal punctuation exists, cleanly close the sentence with a period
+  return `${trimmed}.`;
+};
+
+/**
  * Builds a compact, strictly grounded prompt with context chunks and negative constraints.
  */
 export const buildGroundedPrompt = (
@@ -97,8 +129,10 @@ export const buildGroundedPrompt = (
     .join("\n\n");
 
   if (isVoice) {
-    return `You are Ava, admissions counselor for EduReach College.
-Answer concisely in 1-2 spoken sentences using ONLY this context:
+    return `You are Ava, official admissions counselor for EduReach College, Hyderabad.
+Answer naturally, warmly, and concisely in 1-2 complete spoken sentences (maximum 40 words) using ONLY this context. Always finish your sentence completely with a period. If not present in context, reply exactly "${FALLBACK_MESSAGE}".
+
+CONTEXT:
 ${contextText}
 
 Question: ${question}
@@ -386,7 +420,7 @@ export const getRAGResponse = async (
   const prompt = buildGroundedPrompt(routing.cleanQuery, relevantChunks, isVoice);
   const promptTimeMs = Math.round(performance.now() - promptStart);
   const llmModel = getLLMModel();
-  const maxTokens = isVoice ? 35 : 65; // Balanced token budget for complete sentences without delay
+  const maxTokens = isVoice ? 80 : 75; // Adequate token budget for complete, natural sentences without mid-sentence cutoff
 
   // 6. Ollama Generation with Tuned Context, Stop Tokens & Keep-Alive
   const llmStart = performance.now();
@@ -423,6 +457,8 @@ export const getRAGResponse = async (
 
     if (!answer) {
       answer = FALLBACK_MESSAGE;
+    } else {
+      answer = ensureCompleteResponse(answer);
     }
   } catch (llmError: unknown) {
     logRagError("llm", llmError);
