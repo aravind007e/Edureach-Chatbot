@@ -462,6 +462,15 @@ export const getRAGResponse = async (
   );
 
   console.log(
+    `[PERF] router=${routingTimeMs}ms\n` +
+      `[PERF] embedding=${embeddingTimeMs}ms\n` +
+      `[PERF] retrieval=${retrievalTimeMs}ms\n` +
+      `[PERF] prompt=${promptTimeMs}ms\n` +
+      `[PERF] generation=${llmTimeMs}ms\n` +
+      `[PERF] total=${totalTimeMs}ms`
+  );
+
+  console.log(
     `[RAG TIMING]\n` +
       `requestId: ${requestId}\n` +
       `cache: MISS\n` +
