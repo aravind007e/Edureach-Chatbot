@@ -90,9 +90,16 @@ export const logRagError = (stage: string, err: unknown): void => {
  * trims back to the last complete sentence.
  */
 export const ensureCompleteResponse = (text: string): string => {
-  const trimmed = text.trim();
+  let trimmed = text.trim();
   if (!trimmed || trimmed === FALLBACK_MESSAGE || trimmed === OLLAMA_OFFLINE_MESSAGE) {
     return trimmed;
+  }
+
+  // Strip wrapping quotation marks if present
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    trimmed = trimmed.slice(1, -1).trim();
+  } else if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+    trimmed = trimmed.slice(1).trim();
   }
 
   // If text cleanly ends with sentence-ending punctuation, return as-is
@@ -100,20 +107,50 @@ export const ensureCompleteResponse = (text: string): string => {
     return trimmed;
   }
 
-  // Look for the last terminal punctuation mark (. ! ?)
-  const lastPunctuation = Math.max(
-    trimmed.lastIndexOf("."),
-    trimmed.lastIndexOf("!"),
-    trimmed.lastIndexOf("?")
-  );
+  // Find candidate terminal punctuation marks (. ! ?)
+  // Exclude decimals (e.g. 4.5), abbreviations (B.Tech, M.Tech, Rs., Dr.), and emails/domains
+  const candidates: number[] = [];
+  const regex = /[.!?]/g;
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(trimmed)) !== null) {
+    const idx = m.index;
+    const char = m[0];
 
-  // If there is an earlier complete sentence of substantive length, keep up to that sentence
-  if (lastPunctuation > 25) {
-    return trimmed.substring(0, lastPunctuation + 1).trim();
+    // Exclude decimal numbers (e.g. 4.5 LPA)
+    if (char === "." && idx > 0 && idx < trimmed.length - 1) {
+      if (/\d/.test(trimmed[idx - 1]!) && /\d/.test(trimmed[idx + 1]!)) {
+        continue;
+      }
+    }
+
+    // Exclude emails or domains with no space after dot (e.g. info@edureach.edu.in)
+    if (char === "." && idx < trimmed.length - 1 && /\S/.test(trimmed[idx + 1]!)) {
+      continue;
+    }
+
+    // Exclude common abbreviations (e.g. B.Tech, M.Tech, Rs., Dr., Mr., vs.)
+    const before = trimmed.substring(0, idx);
+    if (char === "." && /\b(?:B|M|Dr|Mr|Mrs|Ms|Prof|Rs|vs|etc|e\.g|i\.e)\b$/i.test(before)) {
+      continue;
+    }
+
+    candidates.push(idx);
   }
 
-  // If no terminal punctuation exists, cleanly close the sentence with a period
-  return `${trimmed}.`;
+  if (candidates.length > 0) {
+    const lastValidIdx = candidates[candidates.length - 1]!;
+    // Keep complete sentence if it has substantive length (at least ~20 chars)
+    if (lastValidIdx >= 20) {
+      let result = trimmed.substring(0, lastValidIdx + 1).trim();
+      if ((result.startsWith('"') && !result.endsWith('"')) || (result.startsWith("'") && !result.endsWith("'"))) {
+        result = result.slice(1).trim();
+      }
+      return result;
+    }
+  }
+
+  // If no complete sentence exists, return standard fallback rather than fabricating incomplete text
+  return FALLBACK_MESSAGE;
 };
 
 /**
@@ -420,7 +457,7 @@ export const getRAGResponse = async (
   const prompt = buildGroundedPrompt(routing.cleanQuery, relevantChunks, isVoice);
   const promptTimeMs = Math.round(performance.now() - promptStart);
   const llmModel = getLLMModel();
-  const maxTokens = isVoice ? 80 : 75; // Adequate token budget for complete, natural sentences without mid-sentence cutoff
+  const maxTokens = isVoice ? 90 : 80; // Adequate token budget for complete, natural sentences without mid-sentence cutoff
 
   // 6. Ollama Generation with Tuned Context, Stop Tokens & Keep-Alive
   const llmStart = performance.now();
