@@ -177,7 +177,7 @@ Spoken Answer:`;
   }
 
   return `You are EduReach Bot, official AI counselor for EduReach College, Hyderabad.
-Answer directly in 1-2 clear, complete sentences using ONLY the context below. Conclude your answer cleanly. If not present in context, reply exactly "${FALLBACK_MESSAGE}".
+Answer directly, accurately, and concisely using ONLY the context below. Cover the key facts (such as degree levels, specializations, or admission pathways) in 2-3 clear, complete sentences. Conclude your answer cleanly with a period. If not present in context, reply exactly "${FALLBACK_MESSAGE}".
 
 CONTEXT:
 ${contextText}
@@ -457,7 +457,7 @@ export const getRAGResponse = async (
   const prompt = buildGroundedPrompt(routing.cleanQuery, relevantChunks, isVoice);
   const promptTimeMs = Math.round(performance.now() - promptStart);
   const llmModel = getLLMModel();
-  const maxTokens = isVoice ? 90 : 80; // Adequate token budget for complete, natural sentences without mid-sentence cutoff
+  const maxTokens = isVoice ? 90 : 180; // 180 tokens accommodates complete multi-sentence lists for text mode without premature cutoff
 
   // 6. Ollama Generation with Tuned Context, Stop Tokens & Keep-Alive
   const llmStart = performance.now();
@@ -477,7 +477,7 @@ export const getRAGResponse = async (
         options: {
           temperature: 0.1, // Low temperature for factual fidelity
           num_predict: maxTokens,
-          num_ctx: 768, // 768 tokens reduces KV cache memory footprint & speeds up CPU attention
+          num_ctx: 1024, // 1024 tokens accommodates full retrieved context and complete answers
           num_thread: cpuThreads,
         },
         stop: ["\n\nQuestion:", "\nQuestion:", "\nUser:", "\nStudent:", "=== END", "\n\nUser:", "Question:"],
@@ -559,17 +559,20 @@ export const getRAGResponse = async (
       `prompt size: ${prompt.length} chars`
   );
 
-  const sources: SourceCitation[] = relevantChunks.map((c) => ({
-    source: c.source,
-    chunkIndex: c.chunkIndex,
-    section: c.section,
-    similarity: Number(c.similarity.toFixed(3)),
-  }));
+  const isFallback = answer === FALLBACK_MESSAGE;
+  const sources: SourceCitation[] = isFallback
+    ? []
+    : relevantChunks.map((c) => ({
+        source: c.source,
+        chunkIndex: c.chunkIndex,
+        section: c.section,
+        similarity: Number(c.similarity.toFixed(3)),
+      }));
 
   const finalResult: RAGResponseResult = {
     answer,
     sources,
-    intent: "knowledge_retrieval",
+    intent: isFallback ? "fallback" : "knowledge_retrieval",
     timingMs: {
       router: routingTimeMs,
       embedding: embeddingTimeMs,

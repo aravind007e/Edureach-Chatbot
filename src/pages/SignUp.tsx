@@ -30,7 +30,13 @@ export default function SignupPage() {
       toast.success("Account created! Welcome to EduReach.");
       navigate("/");
     } catch (err: any) {
-      toast.error(err.response?.data?.message || "Registration failed");
+      const msg =
+        err.response?.data?.message ||
+        (err.code === "ERR_NETWORK"
+          ? "Cannot connect to server. Please verify the backend is running."
+          : err.message || "Registration failed");
+      toast.error(msg);
+      console.error("[SignUp]", err);
     } finally {
       setLoading(false);
     }

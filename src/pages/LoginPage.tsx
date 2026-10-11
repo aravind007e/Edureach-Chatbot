@@ -28,7 +28,13 @@ export default function LoginPage() {
       toast.success("Welcome back!");
       navigate("/");
     } catch (err: any) {
-      toast.error(err.response?.data?.message || "Login failed");
+      const msg =
+        err.response?.data?.message ||
+        (err.code === "ERR_NETWORK"
+          ? "Cannot connect to server. Please verify the backend is running."
+          : err.message || "Login failed");
+      toast.error(msg);
+      console.error("[Login]", err);
     } finally {
       setLoading(false);
     }
